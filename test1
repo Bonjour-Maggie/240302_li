@@ -1,0 +1,193 @@
+import torch
+
+class CRFGRUModel(torch.nn.Module):
+    def __init__(self, num_states, input_size, hidden_size):
+        super(CRFGRUModel, self).__init__()
+        self.num_states = num_states
+        self.transition_matrix = torch.nn.Parameter(torch.rand(num_states, num_states))  # Initialize transition matrix
+        self.gru = torch.nn.GRU(input_size, hidden_size, batch_first=True)
+        self.linear = torch.nn.Linear(hidden_size, num_states)
+    
+    def forward(self, features):
+        """
+        Forward pass of the CRF-GRU model.
+        
+        Parameters:
+            features (Tensor): Input features representing the spatiotemporal characteristics of charging demands.
+        
+        Returns:
+            Tensor: Output scores representing the probabilities of each state.
+        """
+        batch_size, seq_length, _ = features.size()
+        
+        # Pass input features through GRU
+        gru_output, _ = self.gru(features)
+        
+        # Pass GRU output through linear layer
+        gru_output = self.linear(gru_output)
+        
+        # Initialize scores with the first GRU output
+        scores = torch.matmul(gru_output[:, 0, :], self.transition_matrix)
+        
+        # Iterate over the sequence length
+        for i in range(1, seq_length):
+            # Compute scores for each state at time step i
+            new_scores = torch.matmul(gru_output[:, i, :], self.transition_matrix)
+            
+            # Compute transition scores from previous states to current states
+            transition_scores = new_scores.unsqueeze(1) + scores.unsqueeze(2)
+            
+            # Compute the maximum scores and backtrace the paths
+            max_scores, _ = torch.max(transition_scores, dim=1)
+            
+            # Update scores
+            scores = max_scores
+        
+        return scores
+
+# Example usage:
+# Define the CRF-GRU model with a given number of states, input size, and hidden size
+num_states = 3  # Replace with the actual number of states
+input_size = 10  # Replace with the actual input size
+hidden_size = 20  # Replace with the desired hidden size
+crf_gru_model = CRFGRUModel(num_states, input_size, hidden_size)
+
+# Generate some random input features
+torch.manual_seed(0)
+features = torch.randn(2, 5, input_size)  # Batch size of 2, sequence length of 5, input size of 10
+
+# Forward pass through the CRF-GRU model
+output_scores = crf_gru_model(features)
+
+print("Output scores shape:", output_scores.shape)
+
+
+import torch
+
+def isotonic_regression(values, weights=None):
+    """
+    Perform isotonic regression using Pooled Adjacent Violators Algorithm (PAVA).
+    
+    Parameters:
+        values (Tensor): The input tensor of shape (n,).
+        weights (Tensor, optional): Weights of the samples. If None, all weights are considered as 1.
+    
+    Returns:
+        Tensor: Isotonic regression result of the same shape as `values`.
+    """
+    # Sort indices in increasing order of values
+    sorted_indices = torch.argsort(values)
+    sorted_values = values[sorted_indices]
+    if weights is not None:
+        sorted_weights = weights[sorted_indices]
+    else:
+        sorted_weights = torch.ones_like(sorted_values)
+    
+    # Initialize weight sums
+    weight_sum = sorted_weights.clone()
+    
+    # Initialize isotonic estimates
+    isotonic_estimates = sorted_values.clone()
+    
+    # Perform PAVA
+    n = len(sorted_values)
+    i = 0
+    while i < n - 1:
+        j = i
+        # Find the longest monotonic sequence starting at index i
+        while j < n - 1 and isotonic_estimates[j] >= isotonic_estimates[j + 1]:
+            j += 1
+        
+        # Compute the weighted average of the values in the sequence
+        weighted_avg = torch.sum(sorted_values[i : j + 1] * sorted_weights[i : j + 1]) / torch.sum(sorted_weights[i : j + 1])
+        
+        # Update isotonic estimates in the sequence
+        isotonic_estimates[i : j + 1] = weighted_avg
+        
+        # Update weight sums
+        weight_sum[i : j + 1] = torch.sum(sorted_weights[i : j + 1])
+        
+        # Move to the next sequence
+        i = j + 1
+    
+    # Reverse the isotonic estimates back to the original order
+    isotonic_regression_result = torch.empty_like(isotonic_estimates)
+    isotonic_regression_result[sorted_indices] = isotonic_estimates
+    
+    return isotonic_regression_result
+
+# Example usage:
+# Generate some random data
+torch.manual_seed(0)
+values = torch.randn(10)
+weights = torch.rand(10)
+
+# Perform isotonic regression
+isotonic_result = isotonic_regression(values, weights)
+
+print("Original Values:", values)
+print("Isotonic Regression Result:", isotonic_result)
+
+
+import torch
+from torch import nn
+from torch.optim import SGD
+
+class MonotonicityConstraint(nn.Module):
+    def __init__(self, num_points):
+        super(MonotonicityConstraint, self).__init__()
+        self.weights = nn.Parameter(torch.randn(num_points - 1))  # Initialize weights
+        
+    def forward(self, x):
+        """
+        Forward pass of the monotonicity constraint.
+        
+        Parameters:
+            x (Tensor): Input tensor representing the data points.
+        
+        Returns:
+            Tensor: Output tensor with preserved monotonicity.
+        """
+        return torch.cumsum(self.weights, dim=0) + x[0]
+
+# Example usage:
+# Generate some random data points representing price and charging demand
+torch.manual_seed(0)
+num_points = 10
+price = torch.randn(num_points)
+demand = torch.randn(num_points)
+
+# Initialize the monotonicity constraint module
+monotonicity_constraint = MonotonicityConstraint(num_points)
+
+# Define the optimizer
+optimizer = SGD(monotonicity_constraint.parameters(), lr=0.01)
+
+# Training loop
+epochs = 1000
+for epoch in range(epochs):
+    # Zero the gradients
+    optimizer.zero_grad()
+    
+    # Apply the monotonicity constraint
+    modified_demand = monotonicity_constraint(price)
+    
+    # Compute loss (e.g., MSE loss)
+    loss = nn.MSELoss()(modified_demand, demand)
+    
+    # Backpropagation
+    loss.backward()
+    
+    # Update weights
+    optimizer.step()
+
+# Get the modified demand after applying the constraint
+modified_demand = monotonicity_constraint(price)
+
+# Print the modified demand
+print("Modified demand after applying the constraint:", modified_demand)
+
+
+
+
+https://blog.csdn.net/qq_43402798/article/details/117203292
